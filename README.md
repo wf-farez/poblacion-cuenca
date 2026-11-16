@@ -24,6 +24,12 @@ Fuentes únicas:
 | 2010 | sector censal | 12 dígitos | 505 585 |
 | 2022 | sector censal | 12 dígitos | 596 101 |
 
+### Enlaces de descarga de los datos
+- INEC – Bases de datos de los Censos de Población y Vivienda: https://www.ecuadorencifras.gob.ec/base-de-datos-censo-de-poblacion-y-vivienda/
+- INEC – Libros históricos de los censos de población y vivienda (resultados nacionales): https://www.ecuadorencifras.gob.ec/institucional/libros-historicos-censos-de-poblacion-y-vivienda-del-ecuador-resultados-nacionales/
+- GAD Municipal de Cuenca, Cuenca en Datos – Población, censo 2022: https://cuencaendatos.cuenca.gob.ec/dataset/poblacion-censo-2022
+- Censo de Población y Vivienda del Ecuador 2022 – registro 20943520: https://zenodo.org/records/20943520
+
 Para regenerar lo que lee el visor:
 ```bash
 pip install pandas openpyxl numpy      # una vez
