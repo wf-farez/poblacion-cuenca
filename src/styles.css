@@ -1,0 +1,37 @@
+/* Ajustes propios sobre la hoja de MOVIDATA. Solo usa sus variables (--navy-900, --line, --muted…). */
+
+.pob-rango { width: 100%; margin-top: .35rem; accent-color: var(--navy-900); }
+.sp03 .data-counter strong { color: var(--ink); }
+
+.pob-ficha { grid-column: 1 / -1; padding-top: .75rem; border-top: 1px solid var(--line); }
+.pob-ficha h3 { margin: 0 0 .25rem; font-size: 1rem; color: var(--navy-900); }
+.pob-ficha h3 small { color: var(--muted); font-weight: 400; }
+
+.pob-grafico-wrap { position: relative; max-width: 640px; margin-top: .5rem; }
+.pob-grafico { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: pan-y; user-select: none; }
+.pob-grafico__guia { stroke: var(--navy-900); stroke-opacity: .45; }
+.pob-grafico__foco { fill: var(--navy-900); stroke: #fff; stroke-width: 2; }
+.pob-grafico__rango { display: block; margin-top: .15rem; }
+.pob-tooltip { position: absolute; top: .25rem; z-index: 2; display: grid; gap: .1rem; min-width: 11rem; padding: .5rem .65rem; background: var(--navy-900); color: #fff; font-size: .78rem; line-height: 1.3; box-shadow: var(--shadow); pointer-events: none; transform: translateX(.75rem); }
+.pob-tooltip--izq { transform: translateX(calc(-100% - .75rem)); }
+.pob-tooltip strong { font-size: .9rem; }
+.pob-grafico text { fill: var(--muted); font-size: 10px; }
+.pob-grafico__rej { stroke: var(--line); }
+.pob-grafico__real { fill: none; stroke: var(--navy-900); stroke-width: 2.5; }
+.pob-grafico__proy { fill: none; stroke: var(--navy-500); stroke-width: 2.5; stroke-dasharray: 5 4; }
+.pob-grafico__pt { fill: #fff; stroke: var(--navy-900); stroke-width: 2; }
+.pob-grafico__ahora { stroke: var(--brand-red); stroke-dasharray: 2 3; }
+
+.pob-tabla { grid-column: 1 / -1; min-width: 0; margin-top: .5rem; }
+.pob-tabla__barra { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .5rem; color: var(--navy-900); }
+.pob-tabla__barra button { padding: .35rem .8rem; border: 1px solid var(--navy-900); background: var(--navy-900); color: #fff; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.pob-tabla__barra button:hover { background: var(--navy-700); }
+.pob-tabla__scroll { max-height: 420px; overflow: auto; border: 1px solid var(--line); }
+.pob-tabla table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.pob-tabla th { position: sticky; top: 0; padding: .45rem .6rem; background: var(--navy-100); color: var(--navy-900); text-align: left; white-space: nowrap; cursor: pointer; }
+.pob-tabla td { padding: .35rem .6rem; border-top: 1px solid var(--line); }
+.pob-tabla td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.pob-tabla tbody tr { cursor: pointer; }
+.pob-tabla tbody tr:hover { background: var(--surface-soft); }
+.pob-tabla tbody tr.is-sel { background: var(--navy-100); font-weight: 700; }
+.pob-enlace { padding: 0; border: 0; background: none; color: var(--navy-900); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
