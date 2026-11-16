@@ -7,7 +7,7 @@ import {
 } from "./lib/demografia.js";
 
 // Cambia estos textos para el encabezado
-const TITULO = "Población por parroquia, 1950–2050";
+const TITULO = "Población de Cuenca, 1950–2050";
 const MAX_FILAS_SECTORES = 300;
 
 const BASE = import.meta.env.BASE_URL;
