@@ -1,6 +1,6 @@
 # Población de Cuenca por parroquia y sector censal (1950–2050)
 
-Mismo stack y diseño que los mapas MOVIDATA : React 19 + MapLibre GL + deck.gl + Vite, hoja de estilos `src/movidata.css`, mapa base OpenStreetMap.
+React 19 + MapLibre GL + deck.gl + Vite, mapa base OpenStreetMap.
 
 ## Uso
 ```bash
