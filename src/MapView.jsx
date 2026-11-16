@@ -28,7 +28,7 @@ function bboxDe(features) {
   return x0 > x1 ? null : [[x0, y0], [x1, y1]];
 }
 
-// Escala gráfica de 4 tramos (como sp03): 0 · d/2 · d
+// Escala gráfica de 4 tramos: 0 · d/2 · d
 const NICE = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20];
 function calcularEscala(map) {
   const mpp = (78271.517 * Math.cos((map.getCenter().lat * Math.PI) / 180)) / 2 ** map.getZoom();
