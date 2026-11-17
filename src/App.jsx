@@ -251,7 +251,7 @@ export default function App() {
               {Object.entries(METODOS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </Campo>
-          <Campo id="f-base" etiqueta="Período base" ayuda={`Censos que fijan la tasa. Si supera ±${UMBRAL_DISCONTINUIDAD} % anual se asume un cambio de límites. Un sector sin serie propia (o con serie no comparable) crece como su parroquia.`}>
+          <Campo id="f-base" etiqueta="Período base" ayuda={`Censos que fijan la tasa. Si supera ±${UMBRAL_DISCONTINUIDAD} % anual se asume un cambio de límites. Los sectores censales se proyectan siempre al ritmo de su parroquia, desde su cifra de 2022.`}>
             <select id="f-base" value={base} onChange={(e) => setBase(e.target.value)}>
               {Object.entries(BASES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
@@ -317,7 +317,7 @@ export default function App() {
               {tot.estimados > 0 && (
                 <p className="data-counter data-counter--warning">
                   {tot.estimados} {unidad} con valores estimados (interpolados o proyectados), no censales
-                  {tot.respaldo > 0 ? `; en ${tot.respaldo} sectores sin serie propia comparable se usa el crecimiento de su parroquia` : ""}. Las proyecciones son cálculo propio, no oficiales.
+                  {tot.respaldo > 0 ? `; cada sector se proyecta al ritmo de su parroquia, a partir de su cifra del último censo` : ""}. Las proyecciones son cálculo propio, no oficiales.
                 </p>
               )}
 
@@ -329,7 +329,7 @@ export default function App() {
                   </h3>
                   <p className="data-counter">
                     {anio} ({TIPO[filaSel.tipo]}): <strong>{num(filaSel.poblacion)}</strong> hab. · {num(filaSel.densidad, 1)} hab/km² · tasa {num(filaSel.tasa, 2)} % anual
-                    {filaSel.fallback ? " · crece como su parroquia (sin serie propia comparable)" : ""}
+                    {filaSel.fallback ? " · crece al ritmo de su parroquia" : ""}
                     {filaSel.discontinua && !filaSel.fallback ? " · serie discontinua (cambio de límites), se mantiene constante" : ""}
                   </p>
                   <Grafico serie={serie} anio={anio} onAnio={setAnio} km2={entSel.km2} />

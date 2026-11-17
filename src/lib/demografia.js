@@ -55,8 +55,8 @@ function tasaPct(p0, p1) {
  * Devuelve { valor, tipo, tasa, ... } o null si no hay forma de estimarla.
  *  tipo: "censo" | "interpolado" | "proyectado"
  *  tasa: crecimiento anual (%) del tramo al que pertenece el año
- *  padre: (solo sectores) la parroquia a la que pertenece; si el sector no tiene serie propia
- *         utilizable, se proyecta con el crecimiento de su parroquia (fallback = true).
+ *  padre: (solo sectores) la parroquia a la que pertenece; después de su último censo el sector
+ *         crece al ritmo de su parroquia (fallback = true). Entre censos se interpola con su serie.
  */
 export function poblacionEn(parroquia, anio, opts = {}, padre = null) {
   const { sexo = "total", metodo = "exponencial", base = "ultimos2" } = opts;
@@ -85,19 +85,21 @@ export function poblacionEn(parroquia, anio, opts = {}, padre = null) {
   const ult = s[s.length - 1];
   // Un sector que ya no figura en el último censo de su parroquia dejó de existir como tal: no se proyecta
   if (padre && ult.anio < Math.max(...Object.keys(padre.censos).map(Number))) return null;
-  // Sin serie propia (un solo censo) o serie no comparable: crece como su parroquia
-  const comoLaParroquia = (discontinua) => {
+  // Un sector siempre crece al ritmo de su parroquia, desde su último censo: su serie propia no es
+  // comparable entre censos (el INEC divide sectores y, en el área urbana, cambia la numeración),
+  // y así los sectores de una parroquia suman lo mismo que la proyección de la parroquia.
+  if (padre) {
     const p1 = poblacionEn(padre, anio, opts);
     const p0 = poblacionEn(padre, ult.anio, opts);
-    if (!p1?.valor || !p0?.valor) return null;
-    return { valor: (ult.valor * p1.valor) / p0.valor, tipo: "proyectado", tasa: p1.tasa, desde: ult.anio, fallback: true, discontinua };
-  };
-  if (s.length < 2) return (padre && comoLaParroquia(false)) || { valor: null, tipo: "sin-serie", tasa: null };
+    if (!p1?.valor || !p0?.valor) return { valor: null, tipo: "sin-serie", tasa: null };
+    return { valor: (ult.valor * p1.valor) / p0.valor, tipo: "proyectado", tasa: p1.tasa, desde: ult.anio, fallback: true };
+  }
+  if (s.length < 2) return { valor: null, tipo: "sin-serie", tasa: null };
   const ini = base === "todo" ? s[0] : s[s.length - 2];
   const tp = tasaPct(ini, ult);
   if (tp != null && Math.abs(tp) > UMBRAL_DISCONTINUIDAD)
-    // serie no comparable (cambio de límites): crece como su parroquia, o se mantiene constante
-    return (padre && comoLaParroquia(true)) || { valor: ult.valor, tipo: "proyectado", tasa: 0, desde: ult.anio, discontinua: true };
+    // serie no comparable (cambio de límites): se mantiene constante
+    return { valor: ult.valor, tipo: "proyectado", tasa: 0, desde: ult.anio, discontinua: true };
   const r = tasa(ini, ult, metodo);
   return {
     valor: r == null ? null : evalua(ult, r, anio, metodo),
