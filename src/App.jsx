@@ -33,7 +33,6 @@ export default function App() {
   const [datos, setDatos] = useState(null);
   const [sectores, setSectores] = useState(null);
   const [limites, setLimites] = useState(null);
-  const [urbanasGeo, setUrbanasGeo] = useState({ type: "FeatureCollection", features: [] });
   const [error, setError] = useState(null);
 
   const [vista, setVista] = useState("parroquias"); // "parroquias" | "sectores"
@@ -43,7 +42,7 @@ export default function App() {
   const [metrica, setMetrica] = useState("poblacion");
   const [metodo, setMetodo] = useState("exponencial");
   const [base, setBase] = useState("ultimos2");
-  const [selParr, setSelParr] = useState(""); // cod_parr (6 dígitos) o, en la vista de sectores, parroquia urbana (U01…)
+  const [selParr, setSelParr] = useState(""); // cod_parr (6 dígitos), parroquia urbana (U01…) o 010150 (toda el área URBANA)
   const [selSec, setSelSec] = useState(""); // cod_inec (12 dígitos)
   const [orden, setOrden] = useState({ k: "poblacion", d: -1 });
   const [panel, setPanel] = useState(null); // móvil: "leyenda" | "resultados"
@@ -56,34 +55,49 @@ export default function App() {
     ])
       .then(([d, g, l]) => { setDatos(d); setSectores(g); setLimites(l); })
       .catch((e) => setError(String(e)));
-    fetch(`${BASE}data/urbanas.geojson`).then((r) => r.json()).then(setUrbanasGeo).catch(() => {});
   }, []);
 
   const porSectores = vista === "sectores";
   const opts = useMemo(() => ({ sexo, metodo, base }), [sexo, metodo, base]);
   const parrPorId = useMemo(() => new Map((datos?.parroquias ?? []).map((p) => [p.id, p])), [datos]);
-  // Parroquias urbanas: solo nombran y filtran sectores urbanos (las cifras por parroquia siguen en 010150)
-  const urbPorId = useMemo(() => new Map((datos?.urbanas ?? []).map((u) => [u.id, u])), [datos]);
-  const selUrb = urbPorId.get(selParr) ?? null;
 
-  // Filas por parroquia (siempre, 22) y por sector (solo en la vista de sectores)
-  const filasParr = useMemo(() => (datos ? datos.parroquias.map((p) => filaParroquia(p, anio, opts)) : []), [datos, anio, opts]);
+  const censosParr = datos?.censosParroquia ?? [];
+  // Los polígonos de sectores son del último censo (2022). Antes, los códigos de sector no marcan el
+  // mismo lugar (el INEC divide y renumera sectores) y 1950/1982 no tienen sectores: la vista de
+  // sectores solo se muestra desde ese censo hasta 2050.
+  const anioMapa = Math.max(...(datos?.censos ?? [0]));
+  const sinSectores = porSectores && anio < anioMapa;
+  // Parroquias urbanas (grupo 010150): solo existen desde el censo del mapa (suma de sus sectores 2022).
+  // Antes, el área urbana se muestra como un solo total, «Cuenca (URBANA)» (agregado).
+  const agrupa = anio < anioMapa;
+  const parrMapa = useMemo(() => (datos?.parroquias ?? []).filter((p) => (agrupa ? !p.grupo : !p.agregado)), [datos, agrupa]);
+  // parroquia con la que se pinta el polígono de un sector en la vista de parroquias
+  const idParr = (props) => (agrupa ? props.p : props.u || props.p);
+  // id dibujado en el mapa (antes de 2022, una parroquia urbana se dibuja como toda el área URBANA)
+  const grupoDe = useMemo(() => (id) => (agrupa && parrPorId.get(id)?.grupo) || id, [agrupa, parrPorId]);
+  // ¿pertenece a lo elegido? (elegir el área URBANA incluye sus 15 parroquias)
+  const enSel = useMemo(() => (id) => !!selParr && (id === selParr || parrPorId.get(id)?.grupo === selParr), [selParr, parrPorId]);
+  // Fila de una parroquia o de un sector. Las parroquias urbanas crecen al ritmo del total urbano
+  // (solo tienen el censo 2022); los sectores, al de su parroquia.
+  const fila = (e) => {
+    if (e.grupo) return { ...filaParroquia(e, anio, opts, parrPorId.get(e.grupo)), nombre: e.nombre, parroquia: e.nombre, parr: e.id };
+    if (!e.parr) return filaParroquia(e, anio, opts);
+    const f = filaParroquia(e, anio, opts, parrPorId.get(e.parr));
+    const u = parrPorId.get(e.pu);
+    return u ? { ...f, pu: u.id, parroquia: u.nombre } : f;
+  };
+
+  // Filas por parroquia (siempre) y por sector (solo en la vista de sectores)
+  const filasParr = useMemo(() => parrMapa.map(fila), [parrMapa, anio, opts]); // eslint-disable-line react-hooks/exhaustive-deps
   const filasSec = useMemo(
-    () =>
-      datos && porSectores
-        ? datos.sectores.map((s) => {
-            const f = filaParroquia(s, anio, opts, parrPorId.get(s.parr));
-            const u = urbPorId.get(s.pu);
-            return u ? { ...f, pu: u.id, parroquia: u.nombre } : f;
-          })
-        : [],
-    [datos, porSectores, anio, opts, parrPorId, urbPorId],
+    () => (datos && porSectores ? datos.sectores.map(fila) : []),
+    [datos, porSectores, anio, opts, parrPorId], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const filas = porSectores ? filasSec : filasParr;
 
   // El filtro «Parroquia» acota los sectores; en la vista de parroquias solo resalta
-  const pasa = (f) => (!area || f.area === area) && (!porSectores || !selParr || f.parr === selParr || f.pu === selParr);
-  const filasVis = useMemo(() => filas.filter(pasa), [filas, area, selParr, porSectores]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pasa = (f) => !sinSectores && (!area || f.area === area) && (!porSectores || !selParr || enSel(f.parr) || f.pu === selParr);
+  const filasVis = useMemo(() => filas.filter(pasa), [filas, area, enSel, porSectores, sinSectores]); // eslint-disable-line react-hooks/exhaustive-deps
   const visible = useMemo(() => new Set(filasVis.map((f) => f.id)), [filasVis]);
   const porId = useMemo(() => new Map(filas.map((f) => [f.id, f])), [filas]);
 
@@ -92,17 +106,17 @@ export default function App() {
   // Cada polígono se pinta con su sector (vista sectores) o con su parroquia (vista parroquias)
   const colorDe = useMemo(
     () => (p) => {
-      const id = porSectores ? p.c : p.p;
+      const id = porSectores ? p.c : idParr(p);
       const f = porId.get(id);
       if (!f || !visible.has(id)) return [...SIN_DATO, 70];
       const c = claseDe(f[metrica]);
       return c < 0 ? [...SIN_DATO, 255] : [...clases[c].color, 255];
     },
-    [porSectores, porId, visible, claseDe, clases, metrica],
+    [porSectores, porId, visible, claseDe, clases, metrica, agrupa], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   const etiquetas = useMemo(() => {
-    const ents = porSectores ? datos?.sectores : datos?.parroquias;
+    const ents = porSectores ? datos?.sectores : parrMapa;
     if (!ents) return [];
     return ents.flatMap((e) => {
       const f = porId.get(e.id);
@@ -110,19 +124,16 @@ export default function App() {
       const c = claseDe(f[metrica]);
       return [{ text: formato(metrica, f[metrica]), position: e.l, ancho: e.w, color: colorTexto(clases[c]?.color ?? SIN_DATO) }];
     });
-  }, [datos, porSectores, porId, visible, metrica, clases, claseDe]);
+  }, [datos, parrMapa, porSectores, porId, visible, metrica, clases, claseDe]);
 
   const tot = useMemo(() => totales(filasVis), [filasVis]);
   // Censos con cifras solo por parroquia (1950, 1982: sin zona ni sector)
-  const censosParr = datos?.censosParroquia ?? [];
-  const primerCensoSector = Math.min(...(datos?.censos ?? []).filter((a) => !censosParr.includes(a)));
-  const sinSectores = porSectores && anio < primerCensoSector;
   // Población que está en sectores sin polígono (códigos que ya no existen) — solo antes de 2022
   const faltante = useMemo(() => {
-    if (!porSectores || sinSectores || selUrb) return 0; // una parroquia urbana no tiene cifra propia con qué comparar
-    const p = totales(filasParr.filter((f) => (!area || f.area === area) && (!selParr || f.id === selParr)));
+    if (!porSectores || sinSectores) return 0;
+    const p = totales(filasParr.filter((f) => (!area || f.area === area) && (!selParr || enSel(f.id))));
     return Math.max(0, p.poblacion - tot.poblacion);
-  }, [porSectores, sinSectores, selUrb, filasParr, area, selParr, tot]);
+  }, [porSectores, sinSectores, filasParr, area, selParr, enSel, tot]);
 
   const tabla = useMemo(() => {
     const { k, d } = orden;
@@ -135,29 +146,36 @@ export default function App() {
 
   // Ficha: el sector elegido (vista sectores) o la parroquia elegida
   const entSel = porSectores && selSec ? datos?.sectores.find((s) => s.id === selSec) : selParr ? parrPorId.get(selParr) : null;
-  const padreSel = entSel && entSel.parr ? parrPorId.get(entSel.parr) : null;
-  const filaSel = entSel ? (porSectores && selSec ? porId.get(selSec) : filasParr.find((f) => f.id === selParr)) : null;
-  const serie = useMemo(() => (entSel ? serieAnual(entSel, opts, padreSel) : null), [entSel, opts, padreSel]);
-  // Sin selección, el gráfico muestra el total (cantón, o solo el área URBANA / RURAL según el filtro)
-  const parrArea = useMemo(() => (datos?.parroquias ?? []).filter((p) => !area || p.area === area), [datos, area]);
+  const padreSel = entSel?.grupo ? parrPorId.get(entSel.grupo) : entSel?.parr ? parrPorId.get(entSel.parr) : null;
+  const filaSel = entSel ? (porSectores && selSec ? porId.get(selSec) : filasParr.find((f) => f.id === selParr) ?? fila(entSel)) : null;
+  const serie = useMemo(() => {
+    if (!entSel) return null;
+    const sa = serieAnual(entSel, opts, padreSel);
+    // sector: solo desde el año del mapa (antes su código puede ser otro lugar)
+    return porSectores && selSec ? sa.map((v) => (v.anio < anioMapa ? { ...v, valor: null, tipo: "sin-dato" } : v)) : sa;
+  }, [entSel, opts, padreSel, porSectores, selSec, anioMapa]);
+  // Sin selección, el gráfico muestra el total (cantón, o solo el área URBANA / RURAL según el filtro);
+  // lo urbano entra con su total (serie 1950–2050), no con sus parroquias
+  const parrArea = useMemo(() => (datos?.parroquias ?? []).filter((p) => !p.grupo && (!area || p.area === area)), [datos, area]);
   const serieGlobal = useMemo(() => (datos ? serieTotal(parrArea, opts, datos.censos) : null), [datos, parrArea, opts]);
   const km2Global = useMemo(() => parrArea.reduce((t, p) => t + p.km2, 0), [parrArea]);
   const tituloGlobal = area === "URBANA" ? "Área URBANA de Cuenca" : area === "RURAL" ? "Parroquias rurales de Cuenca" : "Cantón Cuenca";
 
-  const elegirEnMapa = (p) => (porSectores ? setSelSec(p.c) : setSelParr(p.p));
+  const elegirEnMapa = (p) => (porSectores ? setSelSec(p.c) : setSelParr(idParr(p)));
 
   const textoTooltip = (p) => {
-    const f = porId.get(porSectores ? p.c : p.p);
+    const f = porId.get(porSectores ? p.c : idParr(p));
     const nombre = porSectores ? `Sector ${p.c}` : f?.nombre ?? p.p;
+    if (sinSectores) return `<b>${nombre}</b><br/>Sin datos por sector antes de ${anioMapa}`;
     if (!f) return nombre;
     const sub = porSectores ? `${f.parroquia}${f.pu ? " · parroquia urbana" : ` (${f.area})`}` : f.area;
     if (f.poblacion == null) return `<b>${nombre}</b><br/>${sub}<br/>Sin dato para ${anio}`;
-    return `<b>${nombre}</b><br/>${sub}<br/>${TIPO[f.tipo]} ${anio}${f.fallback ? " (crece como su parroquia)" : ""}<br/>Población: ${num(f.poblacion)}<br/>Densidad: ${num(f.densidad, 1)} hab/km²<br/>Tasa: ${num(f.tasa, 2)} % anual`;
+    return `<b>${nombre}</b><br/>${sub}<br/>${TIPO[f.tipo]} ${anio}${f.fallback ? (porSectores ? " (crece como su parroquia)" : " (crece al ritmo del área URBANA)") : ""}<br/>Población: ${num(f.poblacion)}<br/>Densidad: ${num(f.densidad, 1)} hab/km²<br/>Tasa: ${num(f.tasa, 2)} % anual`;
   };
 
   const exportarCSV = () => {
     const cab = [porSectores ? "cod_inec" : "cod_parr", "nombre", "parroquia", "area", "anio", "fuente", "poblacion", "hombres", "mujeres", "km2", "densidad_hab_km2", "tasa_pct_anual"];
-    const lin = tabla.map((f) => [f.id, f.nombre, f.parroquia, f.area, anio, TIPO[f.tipo] + (f.fallback ? " (tasa parroquial)" : ""), f.poblacion?.toFixed(0), f.hombres?.toFixed(0), f.mujeres?.toFixed(0), f.km2.toFixed(3), f.densidad?.toFixed(2), f.tasa?.toFixed(3)].join(";"));
+    const lin = tabla.map((f) => [f.id, f.nombre, f.parroquia, f.area, anio, TIPO[f.tipo] + (f.fallback ? (porSectores ? " (tasa parroquial)" : " (tasa del área URBANA)") : ""), f.poblacion?.toFixed(0), f.hombres?.toFixed(0), f.mujeres?.toFixed(0), f.km2.toFixed(3), f.densidad?.toFixed(2), f.tasa?.toFixed(3)].join(";"));
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob(["﻿" + [cab.join(";"), ...lin].join("\n")], { type: "text/csv;charset=utf-8" }));
     a.download = `poblacion_cuenca_${porSectores ? "sectores" : "parroquias"}_${anio}.csv`;
@@ -193,8 +211,8 @@ export default function App() {
         <aside className="filter-panel sp03-filtros">
           <div className="filter-panel__header"><h2>Filtros</h2></div>
 
-          <Campo id="f-vista" etiqueta="Vista" ayuda="Parroquias: cifras de cada parroquia (suma de sus sectores, código INEC de 6 dígitos). Sectores censales: cifras de cada sector (código INEC de 12 dígitos).">
-            <select id="f-vista" value={vista} onChange={(e) => { setVista(e.target.value); setSelSec(""); if (e.target.value !== "sectores" && selUrb) setSelParr("010150"); }}>
+          <Campo id="f-vista" etiqueta="Vista" ayuda="Parroquias: cifras de cada parroquia (código INEC de 6 dígitos); desde 2022, también de cada parroquia urbana (suma de sus sectores). Sectores censales: cifras de cada sector (código INEC de 12 dígitos), de 2022 a 2050.">
+            <select id="f-vista" value={vista} onChange={(e) => { setVista(e.target.value); setSelSec(""); }}>
               <option value="parroquias">Parroquias</option>
               <option value="sectores">Sectores censales</option>
             </select>
@@ -215,7 +233,7 @@ export default function App() {
             <input className="pob-rango" type="range" min={ANIO_MIN} max={ANIO_MAX} value={anio} onChange={(e) => setAnio(+e.target.value)} aria-label="Año" />
           </Campo>
 
-          <Campo id="f-area" etiqueta="Área" ayuda="URBANA: el área URBANA de Cuenca (código INEC 010150, agrupa todas las parroquias urbanas). RURAL: las 21 parroquias rurales del cantón.">
+          <Campo id="f-area" etiqueta="Área" ayuda="URBANA: las 15 parroquias urbanas de Cuenca desde 2022 (el INEC las agrupa en el código 010150; antes de 2022 se muestra el área URBANA completa). RURAL: las 21 parroquias rurales del cantón.">
             <select id="f-area" value={area} onChange={(e) => { setArea(e.target.value); setSelParr(""); setSelSec(""); }}>
               <option value="">Todas</option><option value="URBANA">URBANA</option><option value="RURAL">RURAL</option>
             </select>
@@ -226,8 +244,9 @@ export default function App() {
               <option value="">Todas</option>
               {[["URBANA", "URBANA"], ["RURAL", "RURALES"]].filter(([a]) => !area || a === area).map(([a, t]) => (
                 <optgroup key={a} label={t}>
-                  {datos.parroquias.filter((p) => p.area === a).map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                  {a === "URBANA" && porSectores && (datos.urbanas ?? []).map((u) => <option key={u.id} value={u.id}>{"\u00a0\u00a0"}{u.nombre}</option>)}
+                  {datos.parroquias.filter((p) => p.area === a)
+                    .sort((x, y) => (x.agregado ? -1 : y.agregado ? 1 : a === "URBANA" ? x.nombre.localeCompare(y.nombre, "es") : 0))
+                    .map((p) => <option key={p.id} value={p.id}>{p.agregado ? "Toda el área URBANA" : p.nombre}</option>)}
                 </optgroup>
               ))}
             </select>
@@ -263,7 +282,7 @@ export default function App() {
             <section className="card map-card">
               <MapView
                 sectores={sectores} limites={limites} vista={vista} colorDe={colorDe} visible={visible} etiquetas={etiquetas}
-                selParr={selParr} selSec={porSectores ? selSec : ""} urbanas={urbanasGeo} onElegir={elegirEnMapa} textoTooltip={textoTooltip}
+                selParr={selParr} selSec={porSectores ? selSec : ""} grupoDe={grupoDe} enSel={enSel} onElegir={elegirEnMapa} textoTooltip={textoTooltip}
               />
             </section>
 
@@ -285,7 +304,7 @@ export default function App() {
                   </span>
                   <ul className="legend-list">
                     <li><span className="legend-swatch" aria-hidden="true" style={{ backgroundColor: `rgb(${SIN_DATO})` }} />Sin dato</li>
-                    {clases.map((c) => (
+                    {!sinSectores && clases.map((c) => (
                       <li key={c.etiqueta}><span className="legend-swatch" aria-hidden="true" style={{ backgroundColor: `rgb(${c.color})` }} />{c.etiqueta}</li>
                     ))}
                   </ul>
@@ -296,6 +315,7 @@ export default function App() {
 
             <section className="card map-results">
               <h2>Resultados</h2>
+              {!sinSectores && (<>
               <p className="data-counter" aria-live="polite">
                 Población{nombreSexo} de {anio}: <strong>{num(tot.poblacion)}</strong> habitantes en {tot.conDato} {unidad}
                 {tot.conDato < tot.total ? ` (${tot.total - tot.conDato} sin dato)` : ""}.
@@ -303,10 +323,11 @@ export default function App() {
               <p className="data-counter">
                 Superficie {num(tot.km2, 1)} km² · densidad <strong>{num(tot.densidad, 1)}</strong> hab/km² · hombres {num(pctH, 1)} % · mujeres {num(pctH == null ? null : 100 - pctH, 1)} %.
               </p>
+              </>)}
               {sinSectores && (
                 <p className="data-counter data-counter--warning">
-                  No hay datos por sector censal antes de {primerCensoSector}: los censos {censosParr.join(" y ")} solo tienen cifras por parroquia (sin zona ni sector).{" "}
-                  <button type="button" className="pob-enlace" onClick={() => { setVista("parroquias"); setSelSec(""); if (selUrb) setSelParr("010150"); }}>Ver por parroquias</button>
+                  La vista de sectores censales muestra {anioMapa}–2050. Antes de {anioMapa} no hay datos comparables por sector: los sectores se dibujan con el mapa del censo {anioMapa}, y en los censos anteriores el INEC dividió y renumeró los sectores, así que el mismo código puede ser otro lugar; {censosParr.length ? `${censosParr.join(" y ")} solo tienen cifras por parroquia. ` : ""}Para ver la evolución desde 1950 usa la vista de parroquias.{" "}
+                  <button type="button" className="pob-enlace" onClick={() => { setVista("parroquias"); setSelSec(""); }}>Ver por parroquias</button>
                 </p>
               )}
               {faltante > 0.005 * tot.poblacion && (
@@ -317,11 +338,11 @@ export default function App() {
               {tot.estimados > 0 && (
                 <p className="data-counter data-counter--warning">
                   {tot.estimados} {unidad} con valores estimados (interpolados o proyectados), no censales
-                  {tot.respaldo > 0 ? `; cada sector se proyecta al ritmo de su parroquia, a partir de su cifra del último censo` : ""}. Las proyecciones son cálculo propio, no oficiales.
+                  {tot.respaldo > 0 ? (porSectores ? `; cada sector se proyecta al ritmo de su parroquia, a partir de su cifra del último censo` : `; las ${tot.respaldo} parroquias urbanas solo tienen el censo ${anioMapa} y se proyectan al ritmo del área URBANA`) : ""}. Las proyecciones son cálculo propio, no oficiales.
                 </p>
               )}
 
-              {entSel && filaSel && (
+              {entSel && filaSel && !(sinSectores && selSec) && (
                 <div className="pob-ficha">
                   <h3>
                     {porSectores && selSec ? `Sector ${entSel.id}` : entSel.nombre}{" "}
@@ -329,18 +350,14 @@ export default function App() {
                   </h3>
                   <p className="data-counter">
                     {anio} ({TIPO[filaSel.tipo]}): <strong>{num(filaSel.poblacion)}</strong> hab. · {num(filaSel.densidad, 1)} hab/km² · tasa {num(filaSel.tasa, 2)} % anual
-                    {filaSel.fallback ? " · crece al ritmo de su parroquia" : ""}
+                    {filaSel.fallback ? (entSel.grupo ? ` · crece al ritmo del área URBANA (solo tiene el censo ${anioMapa})` : " · crece al ritmo de su parroquia") : ""}
+                    {entSel.grupo && anio < anioMapa ? ` · no hay datos por parroquia urbana antes de ${anioMapa} (el INEC solo da el total urbano); el mapa muestra toda el área URBANA` : ""}
                     {filaSel.discontinua && !filaSel.fallback ? " · serie discontinua (cambio de límites), se mantiene constante" : ""}
                   </p>
                   <Grafico serie={serie} anio={anio} onAnio={setAnio} km2={entSel.km2} />
                 </div>
               )}
-              {!entSel && selUrb && (
-                <p className="data-counter">
-                  <strong>{selUrb.nombre}</strong> (parroquia urbana): se muestran los {tot.total} sectores que caen dentro de su límite. El INEC no publica cifras propias de las parroquias urbanas (todas están en el código 010150), así que no hay serie ni proyección de la parroquia; pulsa un sector para ver la suya.
-                </p>
-              )}
-              {!entSel && !selUrb && serieGlobal && (
+              {!entSel && serieGlobal && (
                 <div className="pob-ficha">
                   <h3>{tituloGlobal} <small>· serie 1950–2050</small></h3>
                   <Grafico serie={serieGlobal} anio={anio} onAnio={setAnio} km2={km2Global} />
@@ -371,7 +388,7 @@ export default function App() {
                           <td>{f.area}</td>
                           <td className="n">{num(f.poblacion)}</td><td className="n">{num(f.hombres)}</td><td className="n">{num(f.mujeres)}</td>
                           <td className="n">{num(f.km2, porSectores ? 3 : 1)}</td><td className="n">{num(f.densidad, 1)}</td><td className="n">{num(f.tasa, 2)}</td>
-                          <td>{TIPO[f.tipo]}{f.fallback ? " (tasa parroquial)" : ""}{f.discontinua && !f.fallback ? " ⚠" : ""}</td>
+                          <td>{TIPO[f.tipo]}{f.fallback ? (porSectores ? " (tasa parroquial)" : " (tasa urbana)") : ""}{f.discontinua && !f.fallback ? " ⚠" : ""}</td>
                         </tr>
                       ))}
                     </tbody>

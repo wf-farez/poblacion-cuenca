@@ -37,14 +37,17 @@ function calcularEscala(map) {
 }
 
 /**
- * sectores: geojson de sectores (props: c = cod_inec 12 dígitos, p = cod_parr 6 dígitos)
- * limites: aristas derivadas (props: a, b = parroquias que separa; b === "" es el contorno cantonal)
+ * sectores: geojson de sectores (props: c = cod_inec 12 dígitos, p = cod_parr 6 dígitos,
+ *           u = parroquia urbana U01…U15 en los sectores urbanos)
+ * limites: aristas derivadas (props: a, b = parroquias que separa —las urbanas con su id U01…—;
+ *          b === "" es el contorno cantonal)
  * vista: "parroquias" (todos los sectores de una parroquia con el mismo color) | "sectores"
- * urbanas: contorno de las parroquias urbanas (props: u = U01…); se dibuja solo en la vista de sectores.
- *          Los sectores urbanos llevan su parroquia urbana en props.u.
+ * grupoDe(id): parroquia con la que se dibuja `id` (antes de 2022 las urbanas se juntan en 010150)
+ * enSel(id): si la parroquia `id` es la elegida o forma parte de ella (010150 incluye las urbanas)
  */
 export default function MapView({
-  sectores, limites, vista, colorDe, visible, etiquetas, selParr, selSec, onElegir, textoTooltip, urbanas,
+  sectores, limites, vista, colorDe, visible, etiquetas, selParr, selSec, onElegir, textoTooltip,
+  grupoDe = (id) => id, enSel = (id) => id === selParr,
 }) {
   const cont = useRef(null);
   const mapa = useRef(null);
@@ -84,22 +87,23 @@ export default function MapView({
     const f = limites?.features ?? [];
     return {
       contorno: f.filter((x) => x.properties.b === ""),
-      internas: f.filter((x) => x.properties.b !== ""),
+      // en la vista de parroquias, sin límites entre parroquias urbanas mientras se dibujan juntas
+      internas: f.filter((x) => x.properties.b !== "" && (vista === "sectores" || grupoDe(x.properties.a) !== grupoDe(x.properties.b))),
     };
-  }, [limites]);
+  }, [limites, vista, grupoDe]);
+  // borde de lo elegido: aristas que tienen lo elegido a un solo lado (contorno cantonal: b === "")
   const resaltadas = useMemo(
-    () => (selParr ? (limites?.features ?? []).filter((x) => x.properties.a === selParr || x.properties.b === selParr) : []),
-    [limites, selParr],
+    () => (selParr ? (limites?.features ?? []).filter((x) => enSel(x.properties.a) !== (x.properties.b !== "" && enSel(x.properties.b))) : []),
+    [limites, selParr, enSel],
   );
-  const urbanaElegida = useMemo(() => (urbanas?.features ?? []).filter((x) => x.properties.u === selParr), [urbanas, selParr]);
   const sectorElegido = useMemo(() => (selSec && feats ? feats.filter((f) => f.properties.c === selSec) : []), [feats, selSec]);
 
   // Zoom a lo elegido
   useEffect(() => {
     if (!selParr || !feats || !mapa.current) return;
-    const b = bboxDe(feats.filter((f) => f.properties.p === selParr || f.properties.u === selParr));
+    const b = bboxDe(feats.filter((f) => enSel(f.properties.u || f.properties.p)));
     if (b) mapa.current.fitBounds(b, { padding: 80, maxZoom: 13.5, duration: 700 });
-  }, [selParr, feats]);
+  }, [selParr, feats]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!sectorElegido.length || !mapa.current) return;
     const b = bboxDe(sectorElegido);
@@ -137,26 +141,6 @@ export default function MapView({
           lineWidthUnits: "pixels",
           getLineWidth: porSectores ? 1.6 : 1.2,
           getLineColor: [...NAVY, porSectores ? 200 : 150],
-        }),
-        new GeoJsonLayer({
-          id: "limites-urbanas",
-          data: porSectores ? urbanas?.features ?? [] : [],
-          pickable: false,
-          stroked: true,
-          filled: false,
-          lineWidthUnits: "pixels",
-          getLineWidth: 1.2,
-          getLineColor: [...NAVY, 170],
-        }),
-        new GeoJsonLayer({
-          id: "urbana-elegida",
-          data: porSectores ? urbanaElegida : [],
-          pickable: false,
-          stroked: true,
-          filled: false,
-          lineWidthUnits: "pixels",
-          getLineWidth: 3,
-          getLineColor: [...AMARILLO, 255],
         }),
         new GeoJsonLayer({
           id: "parroquia-elegida",
@@ -205,7 +189,7 @@ export default function MapView({
         }),
       ],
     });
-  }, [sectores, feats, lineas, resaltadas, sectorElegido, urbanas, urbanaElegida, vista, colorDe, visible, etiquetas, zoom]);
+  }, [sectores, feats, lineas, resaltadas, sectorElegido, vista, colorDe, visible, etiquetas, zoom]);
 
   const inicio = () => mapa.current?.easeTo({ ...VISTA, bearing: 0, pitch: 0 });
   const paso = escala.ancho / 4;

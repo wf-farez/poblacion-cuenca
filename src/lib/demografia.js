@@ -69,6 +69,8 @@ export function poblacionEn(parroquia, anio, opts = {}, padre = null) {
   if (idx > 0 || (idx === -1 && exacto)) {
     if (exacto) {
       const i = s.indexOf(exacto);
+      // un sector muestra la tasa de su parroquia (su serie propia no es comparable entre censos)
+      if (padre) return { valor: exacto.valor, tipo: "censo", tasa: poblacionEn(padre, anio, opts)?.tasa ?? null };
       const ref = i > 0 ? [s[i - 1], s[i]] : s.length > 1 ? [s[0], s[1]] : null;
       return { valor: exacto.valor, tipo: "censo", tasa: ref ? tasaPct(...ref) : null };
     }

@@ -10,11 +10,11 @@ los archivos que lee el visor en public/data/:
                           coordenadas a 5 decimales ≈ 1 m, solo el cantón 0101)
   limites.geojson         límites parroquiales y contorno cantonal, derivados de las aristas
                           de los propios sectores
-  urbanas.geojson         contorno de las 15 parroquias urbanas (de raw/parraquias_urbanas.geojson)
 
-Parroquias urbanas: el INEC las agrupa todas en 010150. Cada sector urbano se etiqueta con la
-parroquia urbana donde cae su punto interior (campo `pu` del sector). Solo sirve para nombrar y
-filtrar sectores; las cifras por parroquia no cambian (el área urbana sigue siendo 010150).
+Parroquias urbanas: el INEC las agrupa todas en 010150. Cada sector urbano se asigna a la parroquia
+urbana donde cae su punto interior (campo `pu` del sector). Como los polígonos son del último censo
+(2022), solo en ese censo se pueden sumar los sectores de cada parroquia urbana (U01…U15, con
+`grupo: "010150"`); en los censos anteriores el área urbana queda como un total (010150, `agregado`).
 
 Uso:
     pip install pandas openpyxl numpy      (una vez)
@@ -181,7 +181,7 @@ geo = json.loads(GEO.read_text(encoding="utf-8"))
 feats = [f for f in geo["features"] if f["properties"]["cod_canton"] == CANTON]
 print(f"geojson: {len(geo['features'])} sectores en total, {len(feats)} del cantón {CANTON}")
 
-sectores, web, aristas = {}, [], collections.defaultdict(list)
+sectores, web, aristas, polys_sec = {}, [], collections.defaultdict(list), {}
 nombres, km2_parr, bbox_parr = {}, collections.defaultdict(float), {}
 for f in feats:
     p = f["properties"]
@@ -194,10 +194,7 @@ for f in feats:
         continue
     web.append({"type": "Feature", "properties": {"c": cod, "p": parr},
                 "geometry": {"type": "MultiPolygon", "coordinates": [[[list(q) for q in r] for r in poly] for poly in polys]}})
-    for poly in polys:
-        for r in poly:
-            for a, b in zip(r, r[1:]):
-                aristas[(a, b) if a < b else (b, a)].append(parr)
+    polys_sec[cod] = polys
     mayor = max(polys, key=lambda poly: abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(poly[0], poly[0][1:]))))
     xs = [q[0] for poly in polys for q in poly[0]]
     ys = [q[1] for poly in polys for q in poly[0]]
@@ -210,7 +207,7 @@ for f in feats:
 print(f"sectores con geometría: {len(sectores)}")
 
 # ───────────────────────── 2b. Parroquia urbana de cada sector urbano ─────────────────────────
-urbanas, urb_web = [], []
+urbanas = []
 if GEO_URB.exists():
     capa = json.loads(GEO_URB.read_text(encoding="utf-8"))["features"]
     nombres_urb = sorted(((NOMBRE_URB.get(f["properties"]["parroquia"].strip(), titulo(f["properties"]["parroquia"].strip())), f)
@@ -219,8 +216,7 @@ if GEO_URB.exists():
         uid = f"U{i:02d}"
         polys = [[redondea(r) for r in poly] for poly in anillos(f["geometry"])]
         urbanas.append({"id": uid, "nombre": nom, "polys": polys})
-        urb_web.append({"type": "Feature", "properties": {"u": uid},
-                        "geometry": {"type": "MultiLineString", "coordinates": [[list(q) for q in r] for poly in polys for r in poly]}})
+        nombres[uid] = nom
     sin_urb = []
     for s in sectores.values():
         if s["parr"] != URBANA:
@@ -228,13 +224,26 @@ if GEO_URB.exists():
         hay = [u["id"] for u in urbanas if dentro(s["l"], u["polys"])]
         if len(hay) == 1:
             s["pu"] = hay[0]
+            km2_parr[hay[0]] += s["km2"]
+            xs = [q[0] for poly in polys_sec[s["id"]] for q in poly[0]]
+            ys = [q[1] for poly in polys_sec[s["id"]] for q in poly[0]]
+            bb = bbox_parr.setdefault(hay[0], [180, 90, -180, -90])
+            bb[:] = [min(bb[0], min(xs)), min(bb[1], min(ys)), max(bb[2], max(xs)), max(bb[3], max(ys))]
         else:
             sin_urb.append(s["id"])
     cuenta = collections.Counter(s.get("pu") for s in sectores.values() if s["parr"] == URBANA)
     print(f"parroquias urbanas: {len(urbanas)} · sectores urbanos con parroquia: {sum(v for k, v in cuenta.items() if k)}"
           f" · sin parroquia (fuera o en dos): {len(sin_urb)} {sin_urb[:5]}")
 else:
-    print(f"AVISO no se encontró {GEO_URB}: los sectores urbanos quedan sin nombre de parroquia")
+    print(f"AVISO no se encontró {GEO_URB}: el área urbana queda como un solo total (010150)")
+
+# aristas de los polígonos, con la parroquia de cada lado (las urbanas, por su parroquia urbana)
+for cod, polys in polys_sec.items():
+    q = sectores[cod].get("pu") or sectores[cod]["parr"]
+    for poly in polys:
+        for r in poly:
+            for a, b in zip(r, r[1:]):
+                aristas[(a, b) if a < b else (b, a)].append(q)
 
 # ───────────────────────── 3. Unir por cod_inec ─────────────────────────
 parroquias = {}
@@ -253,6 +262,30 @@ for r in x.itertuples(index=False):
     for k in ("t", "h", "m"):
         c[k] += d[k]
 
+# Parroquias urbanas: solo en el censo de los polígonos (ANIO_MAPA). Suma de sus sectores; los
+# sectores urbanos sin polígono de ese censo se asignan por su zona censal (mismo censo).
+ANIO_MAPA = max(censos)
+if urbanas:
+    zona_urb = collections.defaultdict(collections.Counter)
+    for s in sectores.values():
+        if s.get("pu") and ANIO_MAPA in s["censos"]:
+            d = s["censos"][ANIO_MAPA]
+            c = parroquias.setdefault(s["pu"], {"id": s["pu"], "censos": {}})["censos"].setdefault(ANIO_MAPA, {"t": 0, "h": 0, "m": 0})
+            for k in ("t", "h", "m"):
+                c[k] += d[k]
+            zona_urb[s["id"][:9]][s["pu"]] += d["t"]
+    resto = x[(x.parr == URBANA) & (x.anio == ANIO_MAPA) & (x.nivel == "sector") & ~x.cod_inec.isin(list(sectores))]
+    for r in resto.itertuples(index=False):
+        cnt = zona_urb.get(r.cod_inec[:9])
+        if not cnt:
+            sys.exit(f"{ANIO_MAPA}: el sector urbano {r.cod_inec} no tiene polígono ni otros sectores de su zona con parroquia urbana")
+        c = parroquias[cnt.most_common(1)[0][0]]["censos"][ANIO_MAPA]
+        for k, v in (("t", r.t), ("h", r.h), ("m", r.m)):
+            c[k] += int(v)
+    print(f"{ANIO_MAPA}: {int(resto.t.sum())} habitantes urbanos en sectores sin polígono, asignados por su zona censal")
+    suma = {k: sum(parroquias[u["id"]]["censos"][ANIO_MAPA][k] for u in urbanas) for k in ("t", "h", "m")}
+    assert suma == parroquias[URBANA]["censos"][ANIO_MAPA], f"las parroquias urbanas suman {suma} y el total urbano es {parroquias[URBANA]['censos'][ANIO_MAPA]}"
+
 sin_datos = [c for c, s in sectores.items() if not s["censos"]]
 print("población de sectores del Excel sin polígono (cuenta en la parroquia, no en el mapa):", dict(sin_geo))
 print("sectores con polígono pero sin ningún dato en el Excel:", len(sin_datos))
@@ -263,6 +296,8 @@ for c in sin_datos:
 pol = collections.defaultdict(list)
 for s in sectores.values():
     pol[s["parr"]].append(s)
+    if s.get("pu"):
+        pol[s["pu"]].append(s)
 out_parr = []
 for pid, pa in sorted(parroquias.items()):
     ss = pol[pid]
@@ -271,22 +306,27 @@ for pid, pa in sorted(parroquias.items()):
     cen = (P * w[:, None]).sum(0) / w.sum()
     lab = P[np.linalg.norm(P - cen, axis=1).argmin()]
     bb = bbox_parr[pid]
-    out_parr.append({"id": pid, "nombre": "Cuenca (URBANA)" if pid == URBANA else nombres[pid],
-                     "area": "URBANA" if pid == URBANA else "RURAL",
-                     "km2": round(km2_parr[pid], 3), "l": [float(lab[0]), float(lab[1])],
-                     "w": round(bb[2] - bb[0], DEC), "censos": pa["censos"]})
+    urb = pid == URBANA or pid.startswith("U")
+    e = {"id": pid, "nombre": "Cuenca (URBANA)" if pid == URBANA else nombres[pid],
+         "area": "URBANA" if urb else "RURAL",
+         "km2": round(km2_parr[pid], 3), "l": [float(lab[0]), float(lab[1])],
+         "w": round(bb[2] - bb[0], DEC), "censos": pa["censos"]}
+    if pid == URBANA and urbanas:
+        e["agregado"] = True   # total urbano: se muestra antes del censo del mapa y en la serie del cantón
+    elif pid.startswith("U"):
+        e["grupo"] = URBANA    # parroquia urbana: solo desde el censo del mapa
+    out_parr.append(e)
 
 OUT.mkdir(parents=True, exist_ok=True)
 (OUT / "poblacion.json").write_text(json.dumps(
-    {"censos": censos, "censosParroquia": censos_parr, "parroquias": out_parr, "urbanas": [{"id": u["id"], "nombre": u["nombre"]} for u in urbanas],
+    {"censos": censos, "censosParroquia": censos_parr, "parroquias": out_parr,
      "sectores": sorted(sectores.values(), key=lambda s: s["id"])},
     ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 web = [f for f in web if f["properties"]["c"] in sectores]
 for f in web:  # parroquia urbana del sector (para filtrar y hacer zoom en el mapa)
     if "pu" in sectores[f["properties"]["c"]]:
         f["properties"]["u"] = sectores[f["properties"]["c"]]["pu"]
-(OUT / "urbanas.geojson").write_text(
-    json.dumps({"type": "FeatureCollection", "features": urb_web}, separators=(",", ":")), encoding="utf-8")
+(OUT / "urbanas.geojson").unlink(missing_ok=True)  # ya no se usa: los límites urbanos van en limites.geojson
 (OUT / "sectores-cuenca.geojson").write_text(
     json.dumps({"type": "FeatureCollection", "features": web}, separators=(",", ":")), encoding="utf-8")
 
@@ -307,10 +347,11 @@ for (a, b), ar in sorted(grupos.items()):
 # ───────────────────────── 5. Resumen ─────────────────────────
 print("\nCensos:", censos, "· solo por parroquia (sin zona ni sector):", censos_parr)
 for a in censos:
-    con = [p for p in out_parr if a in p["censos"]]
+    con = [p for p in out_parr if a in p["censos"] and "grupo" not in p]  # sin contar dos veces lo urbano
     tot = sum(p["censos"][a]["t"] for p in con)
     h = sum(p["censos"][a]["h"] for p in con)
     print(f"  {a}: población {tot:,} · hombres {h / tot:.1%} · {len(con)} parroquias".replace(",", " "))
-print(f"parroquias: {len(out_parr)} · sectores en el visor: {len(sectores)} · superficie con polígono: {sum(p['km2'] for p in out_parr):.1f} km²")
-for f in ("poblacion.json", "sectores-cuenca.geojson", "limites.geojson", "urbanas.geojson"):
+print("parroquias urbanas", ANIO_MAPA, ":", ", ".join(f"{p['nombre']} {p['censos'][ANIO_MAPA]['t']}" for p in out_parr if "grupo" in p))
+print(f"parroquias: {len(out_parr)} · sectores en el visor: {len(sectores)} · superficie con polígono: {sum(p['km2'] for p in out_parr if 'grupo' not in p):.1f} km²")
+for f in ("poblacion.json", "sectores-cuenca.geojson", "limites.geojson"):
     print(f"  {f}: {(OUT / f).stat().st_size / 1e6:.2f} MB")
