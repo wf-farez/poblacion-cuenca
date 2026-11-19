@@ -111,8 +111,10 @@ export function poblacionEn(parroquia, anio, opts = {}, padre = null) {
   };
 }
 
-/** Densidad hab/km2 */
-export const densidad = (pob, km2) => (pob != null && km2 > 0 ? pob / km2 : null);
+/** Superficie en hectáreas (los datos vienen en km²; 1 km² = 100 ha) */
+export const aHa = (km2) => km2 * 100;
+/** Densidad en habitantes por hectárea */
+export const densidad = (pob, km2) => (pob != null && km2 > 0 ? pob / aHa(km2) : null);
 
 /** Tasa de crecimiento anual (%) entre dos años cualesquiera. */
 export function tasaEntre(parroquia, a1, a2, opts) {
@@ -139,6 +141,7 @@ export function filaParroquia(parroquia, anio, opts, padre = null) {
     parroquia: padre ? padre.nombre : parroquia.nombre,
     area: padre ? padre.area : parroquia.area,
     km2: parroquia.km2,
+    ha: aHa(parroquia.km2),
     poblacion: pob,
     hombres: h?.valor ?? null,
     mujeres: m?.valor ?? null,
@@ -187,7 +190,8 @@ export function totales(filas) {
     hombres: sum("hombres"),
     mujeres: sum("mujeres"),
     km2,
-    densidad: km2 > 0 ? pob / km2 : null,
+    ha: aHa(km2),
+    densidad: densidad(pob, km2),
     conDato: con.length,
     total: filas.length,
     estimados: con.filter((f) => f.tipo !== "censo").length,

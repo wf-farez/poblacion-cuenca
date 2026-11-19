@@ -4,15 +4,46 @@ import { MapboxOverlay } from "@deck.gl/mapbox";
 import { GeoJsonLayer, TextLayer } from "@deck.gl/layers";
 
 const VISTA = { center: [-79.002, -2.9], zoom: 11.2 };
-const OSM = "© OpenStreetMap contributors";
+// Mapas base: se cargan los tres y se muestra uno (visibility). Cada uno puede tener varias capas
+// (`capas`: [tiles, maxzoom], p. ej. fondo + nombres). Sin claves de acceso: OpenStreetMap y Esri.
+// `opacidad`: transparencia de las parroquias/sectores sobre ese fondo; `linea`: color de los límites.
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+const FONDOS = {
+  calles: {
+    nombre: "OpenStreetMap",
+    capas: [["https://tile.openstreetmap.org/{z}/{x}/{y}.png", 19]],
+    atribucion: "© OpenStreetMap contributors",
+    enlace: "https://www.openstreetmap.org/copyright",
+    opacidad: 0.5,
+    linea: [35, 80, 27], // verde del tema (#23501B)
+  },
+  satelite: {
+    nombre: "Esri Satélite",
+    capas: [[`${ESRI}World_Imagery/MapServer/tile/{z}/{y}/{x}`, 19]],
+    atribucion: "Imágenes © Esri, Maxar, Earthstar Geographics",
+    enlace: "https://www.esri.com/",
+    opacidad: 0.4,
+    linea: [255, 255, 255],
+  },
+  oscuro: {
+    nombre: "Esri Gris oscuro",
+    capas: [
+      [`${ESRI}Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, 16],
+      [`${ESRI}Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, 16],
+    ],
+    atribucion: "Mapa base © Esri, HERE, Garmin, © OpenStreetMap contributors",
+    enlace: "https://www.esri.com/",
+    opacidad: 0.55,
+    linea: [255, 255, 255],
+  },
+};
+const CAPAS_FONDO = Object.entries(FONDOS).flatMap(([k, f]) => f.capas.map(([tiles, maxzoom], i) => ({ id: `${k}-${i}`, fondo: k, tiles, maxzoom })));
 const ESTILO = {
   version: 8,
-  sources: { osm: { type: "raster", tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"], tileSize: 256, attribution: OSM, maxzoom: 19 } },
-  layers: [{ id: "osm", type: "raster", source: "osm", minzoom: 0 }],
+  sources: Object.fromEntries(CAPAS_FONDO.map((c) => [c.id, { type: "raster", tiles: [c.tiles], tileSize: 256, maxzoom: c.maxzoom }])),
+  layers: CAPAS_FONDO.map((c) => ({ id: c.id, type: "raster", source: c.id, layout: { visibility: c.fondo === "calles" ? "visible" : "none" } })),
 };
-const OPACIDAD = 0.85;
 const AMARILLO = [255, 214, 0];
-const NAVY = [0, 40, 86];
 
 function bboxDe(features) {
   let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
@@ -46,7 +77,7 @@ function calcularEscala(map) {
  * enSel(id): si la parroquia `id` es la elegida o forma parte de ella (010150 incluye las urbanas)
  */
 export default function MapView({
-  sectores, limites, vista, colorDe, visible, etiquetas, selParr, selSec, onElegir, textoTooltip,
+  sectores, limites, vista, colorDe, visible, etiquetas, nombres = [], filtroMapa = null, selParr, selSec, onElegir, textoTooltip,
   grupoDe = (id) => id, enSel = (id) => id === selParr,
 }) {
   const cont = useRef(null);
@@ -57,6 +88,11 @@ export default function MapView({
   const [zoom, setZoom] = useState(VISTA.zoom);
   const [rumbo, setRumbo] = useState(0);
   const [escala, setEscala] = useState({ km: 2, ancho: 60 });
+  const [fondo, setFondo] = useState("calles");
+  const [listo, setListo] = useState(false);
+  const [menuCapas, setMenuCapas] = useState(false);
+  const capasRef = useRef(null);
+  const F = FONDOS[fondo];
 
   useEffect(() => {
     const map = new maplibregl.Map({ container: cont.current, style: ESTILO, ...VISTA, attributionControl: false });
@@ -66,7 +102,12 @@ export default function MapView({
       getTooltip: ({ object }) =>
         object && {
           html: cb.current.textoTooltip(object.properties),
-          style: { background: "#002856", color: "#fff", fontSize: "12px", lineHeight: "1.4", padding: "8px 10px", borderRadius: "0", boxShadow: "0 10px 30px rgb(0 40 86 / 25%)" },
+          // tarjeta blanca con texto negro y franja verde del tema a la izquierda
+          style: {
+            background: "#fff", color: "#121923", fontSize: "14px", lineHeight: "1.55", padding: "12px 16px",
+            minWidth: "230px", border: "1px solid #dadada", borderLeft: "4px solid #23501b", borderRadius: "4px",
+            boxShadow: "0 10px 30px rgb(18 25 35 / 22%)",
+          },
         },
     });
     map.addControl(ov);
@@ -76,11 +117,37 @@ export default function MapView({
       setEscala(calcularEscala(map));
     };
     map.on("move", sync);
+    map.on("load", () => setListo(true));
     map.on("load", sync);
     mapa.current = map;
     overlay.current = ov;
     return () => map.remove();
   }, []);
+
+  // mapa base visible
+  useEffect(() => {
+    const map = mapa.current;
+    if (!map || !listo) return;
+    const aplicar = () => {
+      for (const c of CAPAS_FONDO) if (map.getLayer(c.id)) map.setLayoutProperty(c.id, "visibility", c.fondo === fondo ? "visible" : "none");
+    };
+    // si el estilo aún se está cargando, se aplica en cuanto termine
+    if (map.isStyleLoaded()) aplicar();
+    else map.once("styledata", aplicar);
+  }, [fondo, listo]);
+
+  // el menú de capas se cierra al pulsar fuera o con Escape
+  useEffect(() => {
+    if (!menuCapas) return;
+    const fuera = (e) => !capasRef.current?.contains(e.target) && setMenuCapas(false);
+    const tecla = (e) => e.key === "Escape" && setMenuCapas(false);
+    document.addEventListener("pointerdown", fuera);
+    document.addEventListener("keydown", tecla);
+    return () => {
+      document.removeEventListener("pointerdown", fuera);
+      document.removeEventListener("keydown", tecla);
+    };
+  }, [menuCapas]);
 
   const feats = sectores?.features;
   const lineas = useMemo(() => {
@@ -88,9 +155,15 @@ export default function MapView({
     return {
       contorno: f.filter((x) => x.properties.b === ""),
       // en la vista de parroquias, sin límites entre parroquias urbanas mientras se dibujan juntas
-      internas: f.filter((x) => x.properties.b !== "" && (vista === "sectores" || grupoDe(x.properties.a) !== grupoDe(x.properties.b))),
+      // con una parroquia elegida no se dibujan los límites de las demás (solo su borde, en amarillo)
+      internas: selParr ? [] : f.filter((x) => x.properties.b !== "" && (vista === "sectores" || grupoDe(x.properties.a) !== grupoDe(x.properties.b))),
     };
-  }, [limites, vista, grupoDe]);
+  }, [limites, vista, grupoDe, selParr]);
+  // polígonos que se dibujan: con una parroquia elegida, solo los suyos (las demás ni se ven ni se pueden pulsar)
+  const datosMapa = useMemo(
+    () => (filtroMapa && sectores ? { ...sectores, features: sectores.features.filter((f) => filtroMapa(f.properties)) } : sectores),
+    [sectores, filtroMapa],
+  );
   // borde de lo elegido: aristas que tienen lo elegido a un solo lado (contorno cantonal: b === "")
   const resaltadas = useMemo(
     () => (selParr ? (limites?.features ?? []).filter((x) => enSel(x.properties.a) !== (x.properties.b !== "" && enSel(x.properties.b))) : []),
@@ -114,15 +187,19 @@ export default function MapView({
     if (!overlay.current || !feats) return;
     const px = 1.4222222222222223 * 2 ** zoom;
     const porSectores = vista === "sectores";
+    // el nombre se muestra si cabe en la parroquia (≈ 6,5 px por letra a 12 px)
+    const cabeNombre = (d) => d.ancho * px >= Math.max(50, d.text.length * 6.5);
+    // en la vista de parroquias, nombre y cifra van en el mismo punto: nombre arriba, cifra abajo
+    const conNombre = new Set(porSectores ? [] : nombres.filter(cabeNombre).map((d) => d.position.join()));
     overlay.current.setProps({
       layers: [
         new GeoJsonLayer({
           id: "sectores",
-          data: sectores,
+          data: datosMapa,
           pickable: true,
           autoHighlight: porSectores,
           highlightColor: [...AMARILLO, 110],
-          opacity: OPACIDAD,
+          opacity: F.opacidad,
           stroked: porSectores,
           filled: true,
           lineWidthUnits: "pixels",
@@ -140,7 +217,8 @@ export default function MapView({
           filled: false,
           lineWidthUnits: "pixels",
           getLineWidth: porSectores ? 1.6 : 1.2,
-          getLineColor: [...NAVY, porSectores ? 200 : 150],
+          getLineColor: [...F.linea, porSectores ? 200 : 150],
+          updateTriggers: { getLineColor: [fondo] },
         }),
         new GeoJsonLayer({
           id: "parroquia-elegida",
@@ -170,7 +248,8 @@ export default function MapView({
           filled: false,
           lineWidthUnits: "pixels",
           getLineWidth: 2,
-          getLineColor: [...NAVY, 255],
+          getLineColor: [...F.linea, 255],
+          updateTriggers: { getLineColor: [fondo] },
         }),
         new TextLayer({
           id: "cifras",
@@ -181,15 +260,38 @@ export default function MapView({
           getText: (d) => d.text,
           getSize: 12,
           getColor: (d) => [...d.color, 255],
+          getPixelOffset: (d) => (conNombre.has(d.position.join()) ? [0, 8] : [0, 0]),
+          updateTriggers: { getPixelOffset: [zoom, vista, nombres] },
           getTextAnchor: "middle",
           getAlignmentBaseline: "center",
           fontFamily: "Arial, sans-serif",
           fontWeight: 700,
           characterSet: "auto",
         }),
+        new TextLayer({
+          id: "nombres",
+          data: nombres.filter(cabeNombre),
+          pickable: false,
+          sizeUnits: "pixels",
+          getPosition: (d) => d.position,
+          getText: (d) => d.text,
+          getSize: porSectores ? 13 : 12,
+          getColor: [255, 255, 255, 255],
+          getPixelOffset: porSectores ? [0, 0] : [0, -8],
+          getTextAnchor: "middle",
+          getAlignmentBaseline: "center",
+          fontFamily: "Arial, sans-serif",
+          fontWeight: 700,
+          characterSet: "auto",
+          // color fijo: texto blanco con contorno verde oscuro del tema; se lee sobre cualquier
+          // tono del mapa y sobre los tres mapas base
+          fontSettings: { sdf: true, fontSize: 64, buffer: 8 },
+          outlineWidth: 5,
+          outlineColor: [20, 47, 16, 255],
+        }),
       ],
     });
-  }, [sectores, feats, lineas, resaltadas, sectorElegido, vista, colorDe, visible, etiquetas, zoom]);
+  }, [sectores, datosMapa, feats, lineas, resaltadas, sectorElegido, vista, colorDe, visible, etiquetas, nombres, zoom, fondo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const inicio = () => mapa.current?.easeTo({ ...VISTA, bearing: 0, pitch: 0 });
   const paso = escala.ancho / 4;
@@ -199,6 +301,30 @@ export default function MapView({
   return (
     <div className="map-canvas">
       <div ref={cont} style={{ position: "absolute", inset: 0 }} />
+
+      <div className="pob-capas" ref={capasRef}>
+        <button
+          type="button" className="pob-capas__boton" aria-label="Mapa base" title="Mapa base"
+          aria-haspopup="menu" aria-expanded={menuCapas} onClick={() => setMenuCapas((v) => !v)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2.5 8 12 13l9.5-5L12 3Z" /><path d="m2.5 12 9.5 5 9.5-5" /><path d="m2.5 16 9.5 5 9.5-5" /></svg>
+        </button>
+        {menuCapas && (
+          <ul className="pob-capas__menu" role="menu" aria-label="Mapa base">
+            {Object.entries(FONDOS).map(([k, f]) => (
+              <li key={k} role="none">
+                <button
+                  type="button" role="menuitemradio" aria-checked={fondo === k}
+                  onClick={() => { setFondo(k); setMenuCapas(false); }}
+                >{f.nombre}</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="pob-atribucion">
+        <a href={F.enlace} target="_blank" rel="noreferrer">{F.atribucion}</a>
+      </div>
 
       <div className="map-navigation" role="group" aria-label="Controles de navegación del mapa">
         <button type="button" className="map-navigation__button map-navigation__button--zoom-in" aria-label="Acercar mapa" title="Acercar" onClick={() => mapa.current?.zoomIn()} />
